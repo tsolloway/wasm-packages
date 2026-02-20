@@ -26,10 +26,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Clone private work package
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          git clone https://${GH_PAT}@github.com/tsolloway/work.git work_pkg
+
       - name: Read packages file
         id: packages
         run: |
-          pkgs=$(grep -v '^\s*$' packages | paste -sd ',' -)
+          # Replace GitHub ref with local path for work
+          pkgs=$(grep -v '^\s*$' packages | sed 's|tsolloway/work|local::./work_pkg|' | paste -sd ',' -)
           echo "pkgs=${pkgs}" >> "$GITHUB_OUTPUT"
 
       - name: Build wasm repo
@@ -38,10 +45,6 @@ jobs:
           PACKAGES: ${{ steps.packages.outputs.pkgs }}
         run: |
           cat > build.R << 'RSCRIPT'
-          if (!require("withr", quietly = TRUE)) install.packages("withr")
-          withr::local_envvar(list(
-            GITHUB_PAT = Sys.getenv("GITHUB_PAT", Sys.getenv("GITHUB_TOKEN"))
-          ))
           if (!require("pak", quietly = TRUE)) install.packages("pak")
           pak::pak("r-wasm/rwasm")
           packages <- strsplit(Sys.getenv("PACKAGES"), ",")[[1]]
