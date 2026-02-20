@@ -1,0 +1,70 @@
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+name: Build and deploy wasm R package repository
+
+jobs:
+  deploy-cran-repo:
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: github-pages
+      cancel-in-progress: true
+
+    permissions:
+      repository-projects: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read packages file
+        id: packages
+        run: |
+          pkgs=$(grep -v '^\s*$' packages | paste -sd ',' -)
+          echo "pkgs=${pkgs}" >> "$GITHUB_OUTPUT"
+
+      - name: Build wasm repo
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          PACKAGES: ${{ steps.packages.outputs.pkgs }}
+        run: |
+          cat > build.R << 'RSCRIPT'
+          if (!require("withr", quietly = TRUE)) install.packages("withr")
+          withr::local_envvar(list(
+            GITHUB_PAT = Sys.getenv("GITHUB_PAT", Sys.getenv("GITHUB_TOKEN"))
+          ))
+          if (!require("pak", quietly = TRUE)) install.packages("pak")
+          pak::pak("r-wasm/rwasm")
+          packages <- strsplit(Sys.getenv("PACKAGES"), ",")[[1]]
+          message("Building packages: ", paste(packages, collapse = ", "))
+          rwasm::add_pkg(packages, repo_dir = "_site")
+          RSCRIPT
+
+          docker pull ghcr.io/r-wasm/webr:main
+
+          docker run --rm \
+            -v "$(pwd):/workspace" \
+            -w /workspace \
+            -e "GITHUB_PAT=${GH_PAT}" \
+            -e "PACKAGES=${PACKAGES}" \
+            --entrypoint Rscript \
+            ghcr.io/r-wasm/webr:main \
+            build.R
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
